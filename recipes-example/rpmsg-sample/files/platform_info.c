@@ -182,7 +182,6 @@ platform_create_proc(int proc_index, int rsc_index)
     }
     memset(rproc_priv, 0, sizeof(*rproc_priv));
     rproc_priv->notify_id = (unsigned int)proc_index;
-//    rproc_priv->vr_info = &vrinfo[rsc_index];
 
     /* Allocate remoteproc instance */
     rproc_inst = metal_allocate_memory(sizeof(struct remoteproc));
