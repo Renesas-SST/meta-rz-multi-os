@@ -1,3 +1,12 @@
+cmake: replace ':' with '_' in MACHINE
+
+Sanitize MACHINE by replacing ':' with '_' so generated
+machine/platform names remain valid.
+
+Ported from Renesas RZ downstream release patchset.
+
+Upstream-Status: Pending
+
 --- ./cmake/options.cmake.org	2018-11-27 11:45:30.911733800 +0900
 +++ ./cmake/options.cmake	2018-11-27 11:03:10.026154000 +0900
 @@ -29,6 +29,7 @@
@@ -8,5 +17,3 @@
  
  if (NOT DEFINED PROJECT_SYSTEM)
    string (TOLOWER ${CMAKE_SYSTEM_NAME}      PROJECT_SYSTEM)
-
-Upstream-Status: Pending
