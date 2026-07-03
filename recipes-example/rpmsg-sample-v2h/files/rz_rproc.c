@@ -32,7 +32,7 @@
 #include <openamp/rpmsg_virtio.h>
 #include "platform_info.h"
 
-#define MAX_READ_WAIT 60 * 1000
+#define MAX_READ_WAIT 6000 * 1000
 
 extern struct ipi_info ipi[UIO_MAX];
 extern struct shm_info shm;
@@ -400,7 +400,7 @@ static int rz_enable_interrupt(struct remoteproc *rproc, struct ipi_info* pipi)
 
     /* Register interrupt handler and enable interrupt for RZ/G2 CA5X or CR7 */
     irq_vect = (uintptr_t)ipi_dev->irq_info;
-    ret = metal_irq_register((int)irq_vect, rz_proc_irq_handler, ipi_dev, rproc);
+    ret = metal_irq_register((int)irq_vect, rz_proc_irq_handler, rproc);
     if (ret) {
         LPRINTF("metal_irq_register() failed with %d", ret);
         return ret;
@@ -415,18 +415,13 @@ static void rz_disable_interrupt(struct remoteproc *rproc, struct ipi_info *pipi
 {
     (void)rproc;
     struct metal_device *dev;
-    int ret;
 
     if (!pipi) goto error_return;
     if (!pipi->dev) goto error_return;
 
     dev = pipi->dev;
     metal_irq_disable((uintptr_t)dev->irq_info);
-    ret = metal_irq_unregister((uintptr_t)dev->irq_info, NULL, dev, NULL);
-    if (ret) {
-        LPRINTF("metal_irq_unregister() failed with %d", ret);
-        goto error_return;
-    }
+    metal_irq_unregister((uintptr_t)dev->irq_info);
     pipi->registered = 0;
 
 error_return:
@@ -435,7 +430,7 @@ error_return:
 
 static struct remoteproc *
 rz_proc_init(struct remoteproc *rproc,
-            struct remoteproc_ops *ops, void *arg)
+            const struct remoteproc_ops *ops, void *arg)
 {
     struct remoteproc_priv *prproc = arg;
     struct metal_device *dev[UIO_MAX];

@@ -37,8 +37,8 @@
 #define VIRTIO_ID_RPMSG_        (7U)
 
 #define NUM_VRINGS              (2U)
-#define NUM_TABLE_ENTRIES       (2U)
-#define NO_RESOURCE_ENTRIES     (2U)
+#define NUM_TABLE_ENTRIES       (1U)
+#define NO_RESOURCE_ENTRIES     (1U)
 
 /* Resource table UIO device */
 #define CFG_RSCTBL_DEV_NAME     "42f00000.rsctbl"
@@ -52,8 +52,6 @@ struct remote_resource_table {
     unsigned int num;
     unsigned int reserved[2];
     unsigned int offset[NO_RESOURCE_ENTRIES];
-    /* rproc memory entry */
-    struct fw_rsc_rproc_mem rproc_mem;
     /* rpmsg vdev entry */
     struct fw_rsc_vdev rpmsg_vdev;
     struct fw_rsc_vdev_vring rpmsg_vring0;

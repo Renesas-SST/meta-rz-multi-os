@@ -94,7 +94,7 @@ struct ipi_info ipi[UIO_MAX] = {
 #endif
 },
 {
-    "receiver@10480100", // name
+    "receiver@10480100", // receiver instance
     DEV_BUS_NAME, // bus_name
     NULL, // dev
     NULL, // io
@@ -110,7 +110,7 @@ struct ipi_info ipi[UIO_MAX] = {
 #endif
 },
 {
-    "receiver@104800C0", // name1
+    "receiver@104800C0", // receiver instance
     DEV_BUS_NAME, // bus_name
     NULL, // dev
     NULL, // io
@@ -126,7 +126,7 @@ struct ipi_info ipi[UIO_MAX] = {
 #endif
 },
 {
-    "receiver@104800E0", // name1
+    "receiver@104800E0", // receiver instance
     DEV_BUS_NAME, // bus_name
     NULL, // dev
     NULL, // io
