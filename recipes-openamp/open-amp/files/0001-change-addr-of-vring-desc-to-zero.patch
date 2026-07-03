@@ -1,0 +1,43 @@
+rpmsg: clear virtqueue descriptors during deinit
+
+Reset outstanding virtqueue descriptors and restore the
+free descriptor count during rpmsg_deinit_vdev() so the
+virtqueues can be cleanly reused after deinitialization.
+
+Ported from Renesas RZ downstream release patchset.
+
+Upstream-Status: Pending
+
+diff --git a/lib/rpmsg/rpmsg_virtio.c b/lib/rpmsg/rpmsg_virtio.c
+index 7baaedd..8a8d65d 100644
+--- a/lib/rpmsg/rpmsg_virtio.c
++++ b/lib/rpmsg/rpmsg_virtio.c
+@@ -950,6 +950,7 @@ void rpmsg_deinit_vdev(struct rpmsg_virtio_device *rvdev)
+ 	struct metal_list *node;
+ 	struct rpmsg_device *rdev;
+ 	struct rpmsg_endpoint *ept;
++	unsigned int i;
+ 
+ 	if (rvdev) {
+ 		rdev = &rvdev->rdev;
+@@ -959,6 +960,20 @@ void rpmsg_deinit_vdev(struct rpmsg_virtio_device *rvdev)
+ 			rpmsg_destroy_ept(ept);
+ 		}
+ 
++		for (i = 0; i < rvdev->rvq->vq_nentries; i++) {
++			if (rvdev->rvq->vq_ring.desc[i].addr != 0) {
++				rvdev->rvq->vq_ring.desc[i].addr = 0;
++				rvdev->rvq->vq_free_cnt++;
++			}
++		}
++
++		for (i = 0; i < rvdev->svq->vq_nentries; i++) {
++			if (rvdev->svq->vq_ring.desc[i].addr != 0) {
++				rvdev->svq->vq_ring.desc[i].addr = 0;
++				rvdev->svq->vq_free_cnt++;
++			}
++		}
++
+ 		rvdev->rvq = 0;
+ 		rvdev->svq = 0;
+ 

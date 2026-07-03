@@ -5,7 +5,7 @@ HOMEPAGE = "https://github.com/OpenAMP/libmetal/"
 SECTION = "libs"
 
 LICENSE = "BSD-3-Clause"
-LIC_FILES_CHKSUM ?= "file://LICENSE.md;md5=fe0b8a4beea8f0813b606d15a3df3d3c"
+LIC_FILES_CHKSUM ?= "file://LICENSE.md;md5=f4d5df0f12dcea1b1a0124219c0dbab4"
 
 REPO ?= "git://github.com/OpenAMP/libmetal.git;protocol=https"
 BRANCH ?= "main"
