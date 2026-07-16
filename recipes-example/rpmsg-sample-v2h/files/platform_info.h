@@ -62,7 +62,13 @@ do { \
     a;})
 
 // Page size on Linux (Default: 4KB)
-#define PAGE_SIZE (0x01000U) // 4KB page size as the dafault value
+#define PAGE_SIZE       (0x01000U)     // 4KB page size as the default value
+
+/* Memory region sizes from device tree (NOT UIO device size) */
+#define CFG_RSCTBL_SIZE         (0x00001000U)  /* 4KB - resource table */
+#define CFG_VRING_CTL_SIZE      (0x00100000U)  /* 1MB - vring control region */
+#define CFG_VRING_SHM_SIZE      (0x00300000U)  /* 3MB - vring shared memory */
+#define CFG_MHU_SHM_SIZE        (0x00001000U)  /* 4KB - MHU shared memory */
 
 // Mailbox config
 #define MBX_DEV_NAME    "10480000.mbox-uio"
@@ -132,8 +138,9 @@ enum MBX_IRQ_ID
 // Register definitions mainly used for metal_device_open()
 #define MBX_REG_BASE    (MHU_REG_BASE) // map all the mailbox registers due to the 4KB page size on Linux
 #define MBX_REG_SIZE    (MHU_MAP_SIZE) // including register regions for both MBX and HWSPL
-#define MBX_MAP_SIZE    (PAGE_SIZE) // uio-based registers must be page-aligned (also applied to uC3)
+#define MBX_MAP_SIZE     0x00000800
 
+#define RSC_MAX_NUM      2
 // Core specific settings
 #ifdef __linux__ /* Linux (A55) */
 #define DEV_BUS_NAME            "platform"
@@ -158,7 +165,9 @@ enum MBX_IRQ_ID
 #define MBX_RSP_INT_CLR_REG(y) (MBX_RSP_INT_STS_REG(y) + 0x8U)
 
 // Shared memory config
-#define SHM_DEV_NAME    "42f01000.mhu-shm"
+#define SHM_DEV_NAME_C0       "42f01000.mhu-shm"   // CM33 MHU-SHM
+#define SHM_DEV_NAME_CR8_0    "42f03000.mhu-shm"   // CR8 core0 MHU-SHM
+#define SHM_DEV_NAME_C1       "42f05000.mhu-shm"   // CR8 core1 MHU-SHM
 
 // Macros for shared memory allocation
 #define MBX_SHMEM_CH_OFFSET(y) (0x08U*(y))
@@ -226,7 +235,7 @@ enum VRING_INFO_IDXS {
     VRING_CTL,
     VRING_SHM,
     VRING_MHU,
-    VRING_MAX,
+    VRING_MAX = 18,   // must cover all regions added in init_memory_device()
 };
 
 struct vring_info {
@@ -236,8 +245,9 @@ struct vring_info {
 };
 
 struct remoteproc_priv {
-    unsigned int notify_id;
-    unsigned int mbx_chn_id;
+    unsigned int notify_id;   /* virtio vdev notify ID sent over mailbox */
+    unsigned int channel;     /* RPMsg channel index (0 or 1) */
+    unsigned int mbx_chn_id;  /* mailbox target (UIO_RECEIVER1/2/3) */
     struct shm_info *vr_info;
 };
 

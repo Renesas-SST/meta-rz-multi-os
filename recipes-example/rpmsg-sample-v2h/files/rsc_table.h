@@ -43,6 +43,11 @@
 /* Resource table UIO device */
 #define CFG_RSCTBL_DEV_NAME     "42f00000.rsctbl"
 #define CFG_RSCTBL_MEM_PA       (0x42f00000U)
+
+// In files/rsc_table.h — add:
+#define CFG_RSCTBL_DEV_NAME_C1  "42f01000.rsctbl"
+#define CFG_RSCTBL_MEM_PA_C1    (0x42f01000U)
+
 #define CFG_RSCTBL_MAP_SIZE     (0x00001000U) // 4KB
 
 #if defined(__CC_ARM) || defined(__GNUC__)
