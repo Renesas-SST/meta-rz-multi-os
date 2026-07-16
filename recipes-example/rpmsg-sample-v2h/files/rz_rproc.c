@@ -35,7 +35,7 @@
 #define MAX_READ_WAIT 6000 * 1000
 
 extern struct ipi_info ipi[UIO_MAX];
-extern struct shm_info shm;
+extern struct shm_info shm[3];
 extern struct mbx_channel chn_info[MBX_CH_NUM];
 extern struct mhu_send_type send_type_info[MBX_CH_NUM];
 
@@ -56,7 +56,8 @@ static int initialized = 0;
 static int isInit[MBX_CH_NUM] = {0};
 
 /** share memories */
-extern struct vring_info vrinfo[CFG_RPMSG_SVCNO];
+extern struct vring_info vrinfo[3];
+extern struct vring_info vrinfo_ch1[3];
 
 /** flag SIGINT or SIGTERM have been received */
 extern int force_stop;
@@ -124,15 +125,49 @@ static inline void metal_io_write32_with_check(struct metal_io_region *io, unsig
     return ;
 }
 
+/**
+ * @fn get_device_size
+ * @brief Get the correct memory size for a UIO device from device tree
+ * @param name - device name
+ * @return size in bytes, or 0 if not found (will use UIO device size as fallback)
+ *
+ * FIX for segmentation fault: Use DT-defined sizes instead of UIO device size.
+ * The UIO device reports only page-aligned size (0x1000), but the actual
+ * allocated regions are larger (0x100000 for vring regions). This causes
+ * OpenAMP to fail lookups for vrings at higher offsets.
+ */
+static size_t get_device_size(const char *name)
+{
+    if (!name) return 0;
+
+    /* Resource tables: 4KB each */
+    if (strstr(name, ".rsctbl")) return CFG_RSCTBL_SIZE;
+
+    /* Vring control regions: 1MB each */
+    if (strstr(name, "vring-ctl")) return CFG_VRING_CTL_SIZE;
+
+    /* Vring shared memory regions: 3MB each */
+    if (strstr(name, "vring-shm")) return CFG_VRING_SHM_SIZE;
+
+    /* MHU shared memory: 4KB each */
+    if (strstr(name, "mhu-shm")) return CFG_MHU_SHM_SIZE;
+
+    /* Default: use UIO device size (fallback) */
+    return 0;
+}
+
 static int init_memory_device_individual(struct shm_info *info){
     struct metal_device *dev;
     metal_phys_addr_t mem_pa;
+    size_t mem_size;
     int ret;
+
+    if (!info->name) return 0;  /* unused slot */
 
     ret = metal_device_open(info->bus_name, info->name, &dev);
     if (ret) {
-        LPERROR("Failed to open uio device %s: %d.", info->name, ret);
-        goto err;
+        LPRINTF("Warning: uio device %s not found, skipping.", info->name);
+        return 0;  /* core may not be kicked */
     }
     LPRINTF("Successfully open uio device: %s.", info->name);
     
@@ -144,10 +179,19 @@ static int init_memory_device_individual(struct shm_info *info){
     }
     
     mem_pa = metal_io_phys(info->io, 0x0U);
+
+    mem_size = get_device_size(info->name);
+    if (mem_size == 0) {
+        mem_size = metal_io_region_size(info->io);
+        LPRINTF("Using fallback UIO size 0x%lx for %s", (unsigned long)mem_size, info->name);
+    } else {
+        LPRINTF("Using DT size 0x%lx for %s", (unsigned long)mem_size, info->name);
+    }
+
     info->mem = metal_allocate_memory(sizeof(*info->mem));
     memset(info->mem, 0, sizeof(*info->mem));
     remoteproc_init_mem(info->mem, info->name, mem_pa, mem_pa,
-                metal_io_region_size(info->io),
+                mem_size,
                 info->io);
     LPRINTF("Successfully added memory device %s.", info->name);
 
@@ -165,6 +209,7 @@ err:
  * @param base - memory management template
  */
 static void add_memory_device(struct remoteproc *rproc, struct shm_info* info, struct shm_info *base) {
+    if (!base->io || !base->mem) return;
     memcpy(info, base, sizeof(struct shm_info));
     info->mem = metal_allocate_memory(sizeof(*info->mem));
     memcpy(info->mem, base->mem, sizeof(*info->mem));
@@ -186,31 +231,56 @@ static int init_memory_device(struct remoteproc *rproc) {
         goto error_return;
     }
 
-    if ((prproc->notify_id < 0) || (1 < prproc->notify_id)) {
+    if (2 < prproc->notify_id) {
         LPRINTF("rscid is invalid");
         goto error_return;
     }
 
     if (vrinfo[0].rsc.dev == NULL) {
-        ret = init_memory_device_individual(&vrinfo[0].rsc);
-        ret |= init_memory_device_individual(&vrinfo[0].ctl);
-        ret |= init_memory_device_individual(&vrinfo[0].shm);
-        ret |= init_memory_device_individual(&vrinfo[1].ctl);
-        ret |= init_memory_device_individual(&vrinfo[1].shm);
-        ret |= init_memory_device_individual(&shm);
-        if (ret) {
-            LPRINTF("init_memory_device failed.");
-            goto error_return;
-        }
+        init_memory_device_individual(&vrinfo[0].rsc);
+        init_memory_device_individual(&vrinfo[1].rsc);
+        init_memory_device_individual(&vrinfo[0].ctl);
+        init_memory_device_individual(&vrinfo[0].shm);
+        init_memory_device_individual(&vrinfo[1].ctl);
+        init_memory_device_individual(&vrinfo[1].shm);
+        
+        init_memory_device_individual(&vrinfo_ch1[0].ctl);
+        init_memory_device_individual(&vrinfo_ch1[0].shm);
+        init_memory_device_individual(&vrinfo_ch1[1].ctl);
+        init_memory_device_individual(&vrinfo_ch1[1].shm);
+        init_memory_device_individual(&vrinfo[2].rsc);
+        init_memory_device_individual(&vrinfo[2].ctl);
+        init_memory_device_individual(&vrinfo[2].shm);
+        init_memory_device_individual(&vrinfo_ch1[2].ctl);
+        init_memory_device_individual(&vrinfo_ch1[2].shm);
+
+        init_memory_device_individual(&shm[0]);
+        init_memory_device_individual(&shm[1]);
+        init_memory_device_individual(&shm[2]);
     } else {
         ret = 0;
     }
 
     metal_list_init(&rproc->mems);
-    add_memory_device(rproc, &prproc->vr_info[0], &vrinfo[0].rsc);
-    add_memory_device(rproc, &prproc->vr_info[1], &vrinfo[prproc->notify_id].ctl);
-    add_memory_device(rproc, &prproc->vr_info[2], &vrinfo[prproc->notify_id].shm);
-    add_memory_device(rproc, &prproc->vr_info[3], &shm);
+    add_memory_device(rproc, &prproc->vr_info[0], &vrinfo[0].rsc);      // 42f00000 (CM33 rsctbl)
+    add_memory_device(rproc, &prproc->vr_info[1], &vrinfo[1].rsc);      // 42f02000 (CR8 core0 rsctbl)
+    add_memory_device(rproc, &prproc->vr_info[2], &vrinfo[0].ctl);      // 43000000 (CM33 ch0 ctl)
+    add_memory_device(rproc, &prproc->vr_info[3], &vrinfo[0].shm);      // 43200000 (CM33 ch0 shm)
+    add_memory_device(rproc, &prproc->vr_info[4], &vrinfo[1].ctl);      // 43800000 (CR8 core0 ch0 ctl)
+    add_memory_device(rproc, &prproc->vr_info[5], &vrinfo[1].shm);      // 43a00000 (CR8 core0 ch0 shm)
+    add_memory_device(rproc, &prproc->vr_info[6], &vrinfo_ch1[0].ctl);  // 43100000 (CM33 ch1 ctl)
+    add_memory_device(rproc, &prproc->vr_info[7], &vrinfo_ch1[0].shm);  // 43500000 (CM33 ch1 shm)
+    add_memory_device(rproc, &prproc->vr_info[8], &vrinfo_ch1[1].ctl);  // 43900000 (CR8 core0 ch1 ctl)
+    add_memory_device(rproc, &prproc->vr_info[9], &vrinfo_ch1[1].shm);  // 43d00000 (CR8 core0 ch1 shm)
+    add_memory_device(rproc, &prproc->vr_info[10], &shm[0]);            // 42f01000 (CM33 mhu-shm)
+    add_memory_device(rproc, &prproc->vr_info[11], &shm[1]);            // 42f03000 (CR8 core0 mhu-shm)
+    add_memory_device(rproc, &prproc->vr_info[12], &vrinfo[2].rsc);     // 42f04000 (CR8 core1 rsctbl)
+    add_memory_device(rproc, &prproc->vr_info[13], &vrinfo[2].ctl);     // 44000000 (CR8 core1 ch0 ctl)
+    add_memory_device(rproc, &prproc->vr_info[14], &vrinfo[2].shm);     // 44200000 (CR8 core1 ch0 shm)
+    add_memory_device(rproc, &prproc->vr_info[15], &shm[2]);            // 42f05000 (CR8 core1 mhu-shm)
+    add_memory_device(rproc, &prproc->vr_info[16], &vrinfo_ch1[2].ctl); // 44100000 (CR8 core1 ch1 ctl)
+    add_memory_device(rproc, &prproc->vr_info[17], &vrinfo_ch1[2].shm); // 44500000 (CR8 core1 ch1 shm)
+    return 0;
 
 error_return:
     return ret;
@@ -238,10 +308,7 @@ static int create_vrinfo(struct remoteproc* rproc) {
         LPRINTF("vr_info allocate memory failed.");
         goto error_return;
     }
-    if (memset(prproc->vr_info, 0, size) == NULL) {
-        LPRINTF("vr_info memset failed.");
-        goto error_return;
-    }
+    memset(prproc->vr_info, 0, size);
 
     ret = init_memory_device(rproc);
 
@@ -300,15 +367,32 @@ static void deinit_memory_device(struct remoteproc *rproc)
     if (!prproc || !prproc->vr_info) goto error_return;
 
     deinit_memory_device_individual(&vrinfo[0].rsc);
+    deinit_memory_device_individual(&vrinfo[1].rsc);
     deinit_memory_device_individual(&vrinfo[0].ctl);
     deinit_memory_device_individual(&vrinfo[0].shm);
     deinit_memory_device_individual(&vrinfo[1].ctl);
     deinit_memory_device_individual(&vrinfo[1].shm);
-    deinit_memory_device_individual(&shm);
+
+    /* Also close ch1 */
+    deinit_memory_device_individual(&vrinfo_ch1[0].ctl);
+    deinit_memory_device_individual(&vrinfo_ch1[0].shm);
+    deinit_memory_device_individual(&vrinfo_ch1[1].ctl);
+    deinit_memory_device_individual(&vrinfo_ch1[1].shm);
+    deinit_memory_device_individual(&vrinfo[2].rsc);
+    deinit_memory_device_individual(&vrinfo[2].ctl);
+    deinit_memory_device_individual(&vrinfo[2].shm);
+    deinit_memory_device_individual(&vrinfo_ch1[2].ctl);
+    deinit_memory_device_individual(&vrinfo_ch1[2].shm);
+
+    deinit_memory_device_individual(&shm[0]);
+    deinit_memory_device_individual(&shm[1]);
+    deinit_memory_device_individual(&shm[2]);
 
     if (prproc->vr_info) {
         for (i = 0; i < VRING_MAX; i++) {
             if (prproc->vr_info[i].mem) {
+                if (prproc->vr_info[i].mem->node.prev != NULL)
+                    metal_list_del(&prproc->vr_info[i].mem->node);
                 metal_free_memory(prproc->vr_info[i].mem);
                 prproc->vr_info[i].mem = NULL;
             }
@@ -331,6 +415,8 @@ static int rz_proc_irq_handler(int vect_id, void *data)
     int th_index;
     int result;
 
+    int shm_idx;
+
     if (valid_thread[UIO_RECEIVER1] &&(vect_id == (long)ipi[UIO_RECEIVER1].dev->irq_info)) {
         pipi = &ipi[UIO_RECEIVER1];
         th_index = 1;
@@ -345,25 +431,28 @@ static int rz_proc_irq_handler(int vect_id, void *data)
         goto error_return;
     }
 
+    if      (th_index == UIO_RECEIVER1) shm_idx = 0;  /* CM33      -> shm[0] */
+    else if (th_index == UIO_RECEIVER2) shm_idx = 1;  /* CR8 core0 -> shm[1] */
+    else                                shm_idx = 2;  /* CR8 core1 -> shm[2] */
+
     if (send_type_info[th_index].send_type == MHU_SEND_TYPE_MSG) {
         /* Clear the interrupt */
         metal_io_write32_with_check(ipi[UIO_MBX].io, MBX_RSP_INT_CLR_REG(chn_info[th_index].rsp), 0x1U);
 
         /* Get a massage from the mailbox */
-        metal_io_read32_with_check(shm.io, MBX_SHMEM_CH_OFFSET(chn_info[th_index].msg) + MBX_SHMEM_TXD_OFFSET, &val);
+        metal_io_read32_with_check(shm[shm_idx].io, MBX_SHMEM_CH_OFFSET(chn_info[th_index].msg) + MBX_SHMEM_TXD_OFFSET, &val);
     } else {
         /* Clear the interrupt */
         metal_io_write32_with_check(ipi[UIO_MBX].io, MBX_MSG_INT_CLR_REG(chn_info[th_index].msg), 0x1U);
 
         /* Get a massage from the mailbox */
-        metal_io_read32_with_check(shm.io, MBX_SHMEM_CH_OFFSET(chn_info[th_index].msg) + MBX_SHMEM_RXD_OFFSET, &val);
+        metal_io_read32_with_check(shm[shm_idx].io, MBX_SHMEM_CH_OFFSET(chn_info[th_index].msg) + MBX_SHMEM_RXD_OFFSET, &val);
     } 
 
     if (val >= RPVDEV_MAX_NUM) { /* val should have the notify_id of the sender */
         result = METAL_IRQ_NOT_HANDLED; /* Invalid message arrived */
         goto error_return;
     }
-
 #ifdef __linux__
     pipi->notify_id = val;
     atomic_flag_clear(&pipi->sync);
@@ -492,11 +581,19 @@ rz_proc_init(struct remoteproc *rproc,
     initialized = 1;
 
 skip:
-    /* Get the resource table device */
+    /*
+     * Increment registered BEFORE create_vrinfo so that if
+     * create_vrinfo (or remoteproc_set_rsc_table called later in
+     * platform_create_proc) fails and triggers remoteproc_remove() ->
+     * rz_proc_remove(), the remove path sees registered > 1 and only
+     * decrements instead of tearing down the global vrinfo[]/shm[]
+     * regions that other already-live rproc instances still depend on.
+     */
+    ipi[UIO_MBX].registered++;
     if (create_vrinfo(rproc)) {
+        ipi[UIO_MBX].registered--;
         goto err1;
     }
-
     return rproc;
 err1:
     metal_device_close(ipi[UIO_MBX].dev);
@@ -542,8 +639,18 @@ static int rz_proc_notify(struct remoteproc *rproc, uint32_t id)
     struct remoteproc_priv *prproc = (struct remoteproc_priv*)rproc->priv;
     unsigned int val = 0U;
     int wait = 0;
+    int shm_idx;
     (void)id;
     
+    /* Determine which shm[] to use based on mailbox target (mbx_chn_id
+     * UIO_RECEIVER1 (CM33) -> shm[0]
+     * UIO_RECEIVER2 (CR8 core0) -> shm[1]
+     * UIO_RECEIVER3 (CR8 core1) -> shm[2]
+	 */
+    if      (prproc->mbx_chn_id == UIO_RECEIVER1) shm_idx = 0;  /* CM33      -> shm[0] */
+    else if (prproc->mbx_chn_id == UIO_RECEIVER2) shm_idx = 1;  /* CR8 core0 -> shm[1] */
+    else                                           shm_idx = 2;  /* CR8 core1 -> shm[2] */
+
     /* Check the send type of the maibox channel for the first time only */
     if (!isInit[prproc->mbx_chn_id]) {
         for (int i = 0; i < MHU_CH_NUM_MAX; i++)
@@ -569,32 +676,35 @@ static int rz_proc_notify(struct remoteproc *rproc, uint32_t id)
 
     if (send_type_info[prproc->mbx_chn_id].send_type == MHU_SEND_TYPE_MSG) {
         /* Put a message saying "This is the notify_id of mine!" */
-        metal_io_write32_with_check(shm.io, MBX_SHMEM_CH_OFFSET(chn_info[prproc->mbx_chn_id].msg) + MBX_SHMEM_RXD_OFFSET, (uint64_t)prproc->notify_id);
+        metal_io_write32_with_check(shm[shm_idx].io, MBX_SHMEM_CH_OFFSET(chn_info[prproc->mbx_chn_id].msg) + MBX_SHMEM_RXD_OFFSET, (uint64_t)prproc->notify_id);
 
-        /* Check interrupt status: Has the previous message been received? */
         do {
-            metal_io_read32_with_check(ipi[UIO_MBX].io, MBX_MSG_INT_STS_REG(chn_info[prproc->mbx_chn_id].msg), &val);
+            metal_io_read32_with_check(ipi[UIO_MBX].io,
+                MBX_MSG_INT_STS_REG(chn_info[prproc->mbx_chn_id].msg), &val);
             if ((wait++) > MAX_READ_WAIT) {
-                LPRINTF("communication abort.");
+                LPRINTF("communication abort. chn=%u msg_ch=%u sts=0x%x",
+                        prproc->mbx_chn_id, chn_info[prproc->mbx_chn_id].msg, val);
                 return -1;
             }
-    } while (0U != val && !force_stop);
+        } while (0U != val && !force_stop);
 
         /* Send notification */
         metal_io_write32_with_check(ipi[UIO_MBX].io, MBX_MSG_INT_SET_REG(chn_info[prproc->mbx_chn_id].msg), 0x1U);
 
     } else {
         /* Put a message saying "This is the notify_id of mine!" */
-        metal_io_write32_with_check(shm.io, MBX_SHMEM_CH_OFFSET(chn_info[prproc->mbx_chn_id].msg) + MBX_SHMEM_TXD_OFFSET, (uint64_t)prproc->notify_id);
+        metal_io_write32_with_check(shm[shm_idx].io, MBX_SHMEM_CH_OFFSET(chn_info[prproc->mbx_chn_id].msg) + MBX_SHMEM_TXD_OFFSET, (uint64_t)prproc->notify_id);
 
         /* Check interrupt status: Has the previous message been received? */
-        do { 
-            metal_io_read32_with_check(ipi[UIO_MBX].io, MBX_RSP_INT_STS_REG(chn_info[prproc->mbx_chn_id].rsp), &val);
+        do {
+            metal_io_read32_with_check(ipi[UIO_MBX].io,
+                MBX_MSG_INT_STS_REG(chn_info[prproc->mbx_chn_id].msg), &val);
             if ((wait++) > MAX_READ_WAIT) {
-                LPRINTF("communication abort.");
+                LPRINTF("communication abort. chn=%u msg_ch=%u sts=0x%x",
+                        prproc->mbx_chn_id, chn_info[prproc->mbx_chn_id].msg, val);
                 return -1;
             }
-    } while (0U != val && !force_stop);
+        } while (0U != val && !force_stop);
 
         /* Send notification */
         metal_io_write32_with_check(ipi[UIO_MBX].io, MBX_RSP_INT_SET_REG(chn_info[prproc->mbx_chn_id].rsp), 0x1U);
@@ -606,34 +716,46 @@ static int rz_proc_notify(struct remoteproc *rproc, uint32_t id)
 #ifdef __linux__
 static void *
 rz_proc_mmap(struct remoteproc *rproc,
-            metal_phys_addr_t *pa, metal_phys_addr_t *da, size_t size,
-            unsigned int attribute, struct metal_io_region **io)
+             metal_phys_addr_t *pa, metal_phys_addr_t *da, size_t size,
+             unsigned int attribute, struct metal_io_region **io)
 {
     metal_phys_addr_t lpa, lda;
-    struct metal_io_region *tmpio;
-    struct remoteproc_priv *prproc;
+    struct remoteproc_mem *mem;
+    struct metal_list *node;
+    struct metal_io_region *tmpio = NULL;
     (void)attribute;
-    (void)size;
 
     if (!rproc) {
         LPRINTF("rproc is null");
         return NULL;
     }
-    prproc = rproc->priv;
-    
+
     lpa = *pa;
     lda = *da;
 
-    if ((lpa == METAL_BAD_PHYS) && (lda == METAL_BAD_PHYS)){
+    if ((lpa == METAL_BAD_PHYS) && (lda == METAL_BAD_PHYS))
         return NULL;
-    }
+
     if (lpa == METAL_BAD_PHYS)
         lpa = lda;
     if (lda == METAL_BAD_PHYS)
         lda = lpa;
-    tmpio = prproc->vr_info[VRING_RSC].io; /* We consider the resource table device only */
+
+    /* Search registered memory regions for one that covers [lpa, lpa+size) */
+    metal_list_for_each(&rproc->mems, node) {
+        mem = metal_container_of(node, struct remoteproc_mem, node);
+        if (!mem->io)
+            continue;
+        if (lpa < mem->pa)
+            continue;
+        if (lpa + size > mem->pa + mem->size)
+            continue;
+        tmpio = mem->io;
+        break;
+    }
+
     if (!tmpio) {
-        LPRINTF("tmpio is null");
+        LPRINTF("no memory region found for pa=0x%lx", (unsigned long)lpa);
         return NULL;
     }
 

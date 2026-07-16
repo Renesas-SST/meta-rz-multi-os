@@ -90,7 +90,6 @@ struct comm_arg ids[] = {
     {NULL, 1, UIO_RECEIVER2},
     {NULL, 0, UIO_RECEIVER3},
     {NULL, 1, UIO_RECEIVER3},
-
 };
 
 /* External functions */
@@ -296,15 +295,38 @@ int main(int argc, char *argv[])
 
     /* Initialize platform */
 
-    for (i = 0; i < ARRAY_SIZE(ids); i++) {
-        proc_id = rsc_id = ids[i].channel;
-        mbx_id = ids[i].target;
-        ret = platform_init(proc_id, rsc_id, mbx_id, &ids[i].platform);
-        if (ret) {
+    {
+        int ok_count = 0;
+
+        for (i = 0; i < ARRAY_SIZE(ids); i++) {
+            proc_id = rsc_id = ids[i].channel;
+            mbx_id = ids[i].target;
+            ret = platform_init(proc_id, rsc_id, mbx_id, &ids[i].platform);
+            if (ret) {
+                /*
+                 * A remote core whose firmware is not loaded will not have a
+                 * valid resource table (OpenAMP handle_rsc_table() rejects it
+                 * with RPROC_ERR_RSC_TAB_VER because rsc_table->ver != 1).
+                 * Do NOT abort the whole application in that case: just skip
+                 * this entry so the remaining cores (e.g. CR8 core1) can still
+                 * be initialized and used.
+                 */
+                LPRINTF("Skipping remote (channel=%lu target=%lu): "
+                        "platform_init failed (firmware not loaded?).",
+                        (unsigned long)ids[i].channel,
+                        (unsigned long)ids[i].target);
+                ids[i].platform = NULL;
+                continue;
+            }
+            ok_count++;
+        }
+
+        if (ok_count == 0) {
             LPERROR("Failed to initialize platform.");
             ret = 1;
             goto error_return;
         }
+        ret = 0;
     }
 
     while (!force_stop) {
@@ -327,7 +349,6 @@ int main(int argc, char *argv[])
 error_return:
     return ret;
 }
-
 /**
  * @fn set_tid
  * @brief set thread information
@@ -343,7 +364,6 @@ static void set_tid(int target)
         g_tid_cr8_1 = tid;
     }
 }
-
 /**
  * @fn clear_tid
  * @brief clear thread information
@@ -358,7 +378,6 @@ static void clear_tid(void) {
         g_tid_cr8_1 = 0;
     }
 }
-
 /**
  * @fn communicate
  * @brief perform test communication
@@ -370,6 +389,14 @@ static void *communicate(void* arg) {
     unsigned long proc_id = p->channel;
 
     int *thvalp = malloc(sizeof(int));
+    if (!p || !p->platform) {
+        return NULL;
+    }
+    if (!thvalp) {
+        LPERROR("malloc failed.");
+        return NULL;
+    }
+
     LPRINTF("thread start");
     set_tid(p->target);
 
@@ -385,6 +412,9 @@ static void *communicate(void* arg) {
     pthread_mutex_unlock(&rsc_mutex);
     if (!rpdev) {
         LPERROR("Failed to create rpmsg virtio device.");
+        valid_thread[*thvalp] = false;
+        clear_tid();
+        return NULL;
     } else {
         (void)app(rpdev, p->platform, proc_id);
         platform_release_rpmsg_vdev(p->platform, rpdev);
@@ -410,15 +440,19 @@ static void launch_communicate(int pattern)
     if ((pattern < 0) || pattern > 9 ) return;
 
     if (pattern == 6) {
+        if (!ids[0].platform || !ids[3].platform) return;
         pthread_create(&th[0], NULL, communicate, &ids[0]);
         pthread_create(&th[1], NULL, communicate, &ids[3]);
     } else if (pattern == 7) {
+        if (!ids[0].platform || !ids[5].platform) return;
         pthread_create(&th[0], NULL, communicate, &ids[0]);
         pthread_create(&th[1], NULL, communicate, &ids[5]);
     } else if (pattern == 8) {
+        if (!ids[2].platform || !ids[5].platform) return;
         pthread_create(&th[0], NULL, communicate, &ids[2]);
         pthread_create(&th[1], NULL, communicate, &ids[5]);
     } else{
+        if (!ids[pattern].platform) return;
         pthread_create(&th[0], NULL, communicate, &ids[pattern]);
     }
 
